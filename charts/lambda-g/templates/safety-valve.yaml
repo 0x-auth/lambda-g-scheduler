@@ -1,0 +1,30 @@
+{{- /*
+Safety Valve: If Lambda-G crashes, K8s falls back to default scheduler.
+This is the "zero-risk" promise to enterprise customers.
+*/ -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: lambda-g-scheduler-webhook
+  labels:
+    app: lambda-g
+webhooks:
+- name: scheduler.lambda-g.io
+  failurePolicy: Ignore  # ← THE SAFETY VALVE: if Lambda-G is down, K8s continues normally
+  sideEffects: None
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: lambda-g-controller
+      namespace: {{ .Release.Namespace }}
+      path: "/schedule"
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  namespaceSelector:
+    matchExpressions:
+    - key: lambda-g/enabled
+      operator: In
+      values: ["true"]

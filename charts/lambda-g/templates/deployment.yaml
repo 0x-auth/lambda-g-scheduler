@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lambda-g-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: lambda-g
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lambda-g
+  template:
+    metadata:
+      labels:
+        app: lambda-g
+    spec:
+      serviceAccountName: lambda-g-sa
+      containers:
+      - name: controller
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        resources:
+          requests:
+            cpu: {{ .Values.resources.requests.cpu }}
+            memory: {{ .Values.resources.requests.memory }}
+          limits:
+            cpu: {{ .Values.resources.limits.cpu }}
+            memory: {{ .Values.resources.limits.memory }}
+        env:
+        - name: LAMBDA_G_CAPACITY_GATE
+          value: "{{ .Values.scheduler.capacityGate }}"
+        - name: LAMBDA_G_PHI
+          value: "{{ .Values.scheduler.phiWeight }}"
+        - name: LAMBDA_G_LICENSE
+          value: "{{ .Values.licenseKey }}"

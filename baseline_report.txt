@@ -1,0 +1,8 @@
+🔍 [Lambda-G] Scanning for Entropic Leaks...
+
+Node Name            | CPU %    | RAM %    | Status
+----------------------------------------------------------------------
+minikube             |   13.2% |   11.4% | Balanced
+----------------------------------------------------------------------
+
+💰 Potential Monthly Recovery: $0.00
