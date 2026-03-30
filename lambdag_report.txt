@@ -1,8 +1,0 @@
-🔍 [Lambda-G] Scanning for Entropic Leaks...
-
-Node Name            | CPU %    | RAM %    | Status
-----------------------------------------------------------------------
-minikube             |   85.9% |   19.4% | Leaking (Mismatch)
-----------------------------------------------------------------------
-
-💰 Potential Monthly Recovery: $0.00
