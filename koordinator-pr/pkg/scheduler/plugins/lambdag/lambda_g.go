@@ -132,9 +132,9 @@ func podVector(pod *corev1.Pod, nodeInfo *framework.NodeInfo) [MaxDimensions]flo
 		memNorm = math.Min(1.0, float64(memReq)/memTotal)
 	}
 
-	// GPU request dimensions
-	gpuCoreReq := getExtendedResourceReq(pod, ResourceGPUCore)
-	gpuMemReq := getExtendedResourceReq(pod, ResourceGPUMemory)
+	// GPU request dimensions (normalized against node allocatable)
+	gpuCoreReq := getExtendedResourceReq(pod, nodeInfo, ResourceGPUCore)
+	gpuMemReq := getExtendedResourceReq(pod, nodeInfo, ResourceGPUMemory)
 
 	return [MaxDimensions]float64{cpuNorm, memNorm, gpuCoreReq, gpuMemReq, 0.05, 0.05}
 }
@@ -172,8 +172,9 @@ func getExtendedResourceFree(nodeInfo *framework.NodeInfo, resourceName string) 
 }
 
 // getExtendedResourceReq returns the normalized resource request of a pod
-// for an extended resource. Returns 0.05 (minimal) if not requested.
-func getExtendedResourceReq(pod *corev1.Pod, resourceName string) float64 {
+// for an extended resource, normalized against the node's allocatable capacity.
+// Returns 0.05 (minimal) if not requested.
+func getExtendedResourceReq(pod *corev1.Pod, nodeInfo *framework.NodeInfo, resourceName string) float64 {
 	resName := corev1.ResourceName(resourceName)
 	var total int64
 	for _, c := range pod.Spec.Containers {
@@ -184,7 +185,15 @@ func getExtendedResourceReq(pod *corev1.Pod, resourceName string) float64 {
 	if total <= 0 {
 		return 0.05 // Not requested — minimal impact
 	}
-	// Normalize to 0-1 range (assume 100 = full GPU)
+
+	// Normalize against actual node allocatable capacity
+	node := nodeInfo.Node()
+	if node != nil {
+		if nodeTotal := node.Status.Allocatable[resName]; !nodeTotal.IsZero() {
+			return math.Min(1.0, float64(total)/float64(nodeTotal.Value()))
+		}
+	}
+	// Fallback: node has no allocatable for this resource
 	return math.Min(1.0, float64(total)/100.0)
 }
 
