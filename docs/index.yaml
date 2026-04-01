@@ -1,0 +1,22 @@
+apiVersion: v1
+entries:
+  lambda-g:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-04-01T18:54:30.626762+05:30"
+    description: 'Lambda-G: Symmetric Exhaustion Scheduler — φ-weighted K8s pod placement'
+    digest: e71480fe0193e7c499b7c2bf009008a36fcff3fad97d8aa3eb1ed6deb46fb36e
+    keywords:
+    - kubernetes
+    - scheduler
+    - optimization
+    - golden-ratio
+    maintainers:
+    - email: bitsabhi@gmail.com
+      name: Abhishek Srivastava
+    name: lambda-g
+    type: application
+    urls:
+    - https://0x-auth.github.io/lambda-g-scheduler/lambda-g-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-04-01T18:54:30.62636+05:30"
