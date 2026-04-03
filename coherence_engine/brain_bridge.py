@@ -16,6 +16,8 @@ possible_patterns = [
 lib_path = None
 for pattern in possible_patterns:
     matches = glob.glob(pattern)
+    # Prefer .dylib (macOS) or .so (Linux) over .rlib (Rust static lib, not loadable)
+    matches = [m for m in matches if m.endswith('.dylib') or m.endswith('.so')]
     if matches:
         lib_path = matches[0]
         break
