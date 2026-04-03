@@ -39,7 +39,7 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 # Labels for AWS Marketplace
 LABEL maintainer="Abhishek Srivastava <bitsabhi@gmail.com>"
 LABEL description="Lambda-G: Symmetric Exhaustion Scheduler for Kubernetes"
-LABEL version="0.1.0"
+LABEL version="0.2.0"
 
 # Default: run the controller
 CMD ["python", "-m", "kopf", "run", "controller.py", "--verbose"]

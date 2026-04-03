@@ -1,19 +1,19 @@
 /*
-Package lambdag implements the Lambda-G Symmetric Exhaustion Score plugin
+Package lambdag implements the Lambda-G V3 Hybrid Score plugin
 for Koordinator scheduler.
 
-Lambda-G scores nodes by measuring how much MORE balanced a node becomes
-after placing a pod, using cosine alignment between the pod's resource
-request vector and the node's free capacity vector.
+Lambda-G V3 scores nodes using a weighted combination of:
+  1. Variance score — how balanced the node will be after placement
+  2. Alignment score — cosine similarity between pod request and node free capacity
+  3. Headroom score — average free capacity across dimensions
+  4. Pressure penalty — hard penalty near exhaustion (>85% or >92%)
+  5. Strand penalty — penalizes dimension pairs with extreme imbalance
+
+  score = 0.6*variance + 0.2*alignment + 0.1*headroom - pressure - strand
 
 This addresses the resource imbalance problem described in:
 https://github.com/koordinator-sh/koordinator/issues/2332
 https://github.com/koordinator-sh/koordinator/issues/2837
-
-The scoring function uses φ-weighted (golden ratio) combination of:
-  1. Cosine alignment between pod request and node capacity vectors
-  2. Symmetric exhaustion bonus (entropy reduction after placement)
-  3. Entropy leak penalty (penalizes stranding resources)
 
 Reference: github.com/0x-auth/lambda-g-auditor
 */
@@ -31,28 +31,28 @@ import (
 
 const (
 	// Name is the name of the plugin used in the plugin registry and configurations.
-	Name = "LambdaGSymmetricExhaustion"
-
-	// PHI is the golden ratio, used as the primary weighting constant.
-	// φ is the fixed point of self-reference: φ - 1 = 1/φ.
-	// This provides mathematically optimal decay across scoring layers.
-	PHI = 1.618033988749895
+	Name = "LambdaGHybridScore"
 
 	// MaxDimensions is the number of resource dimensions tracked.
 	// [CPU, Memory, GPUCore, GPUMemory, IOPS, Network]
 	MaxDimensions = 6
 
+	// V3 scoring weights
+	wVar  = 0.6
+	wAlign = 0.2
+	wHead  = 0.1
+
 	// Koordinator GPU resource names
-	ResourceGPUCore       = "koordinator.sh/gpu-core"
-	ResourceGPUMemory     = "koordinator.sh/gpu-memory"
-	ResourceGPUMemRatio   = "koordinator.sh/gpu-memory-ratio"
+	ResourceGPUCore     = "koordinator.sh/gpu-core"
+	ResourceGPUMemory   = "koordinator.sh/gpu-memory"
+	ResourceGPUMemRatio = "koordinator.sh/gpu-memory-ratio"
 
 	// CapacityGateThreshold is the minimum free fraction below which
 	// a node receives a heavy penalty. Prevents overloading.
 	CapacityGateThreshold = 0.10
 )
 
-// Plugin implements framework.ScorePlugin for symmetric exhaustion scoring.
+// Plugin implements framework.ScorePlugin for V3 hybrid scoring.
 type Plugin struct {
 	handle framework.Handle
 }
@@ -70,7 +70,7 @@ func New(_ runtime.Object, h framework.Handle) (framework.Plugin, error) {
 }
 
 // nodeVector extracts the normalized free resource vector from a node.
-// Returns [cpu_free_fraction, mem_free_fraction, 0.5, 0.5]
+// Returns [cpu_free_fraction, mem_free_fraction, gpu_core_free, gpu_mem_free, 0.5, 0.5]
 // where fractions are in range [0.0, 1.0].
 func nodeVector(nodeInfo *framework.NodeInfo) [MaxDimensions]float64 {
 	node := nodeInfo.Node()
@@ -105,7 +105,7 @@ func nodeVector(nodeInfo *framework.NodeInfo) [MaxDimensions]float64 {
 }
 
 // podVector extracts the normalized resource request from a pod.
-// Returns [cpu_req_fraction, mem_req_fraction, 0.05, 0.05]
+// Returns [cpu_req_fraction, mem_req_fraction, gpu_core_req, gpu_mem_req, 0.05, 0.05]
 // where fractions are relative to node capacity.
 func podVector(pod *corev1.Pod, nodeInfo *framework.NodeInfo) [MaxDimensions]float64 {
 	node := nodeInfo.Node()
@@ -214,73 +214,7 @@ func cosineSimilarity(a, b [MaxDimensions]float64) float64 {
 	return math.Max(-1, math.Min(1, dot/(magA*magB)))
 }
 
-// resourceEntropy computes the Shannon entropy of a resource distribution.
-// Lower entropy = more balanced resource usage.
-func resourceEntropy(v [MaxDimensions]float64) float64 {
-	sum := 0.0
-	for _, x := range v {
-		sum += x
-	}
-	if sum < 1e-10 {
-		return 0
-	}
-	h := 0.0
-	for _, x := range v {
-		p := x / sum
-		if p > 1e-10 {
-			h -= p * math.Log(p)
-		}
-	}
-	return h
-}
-
-// symmetricExhaustionScore measures how much more balanced the node
-// becomes after placing the pod. Positive = node becomes more balanced.
-func symmetricExhaustionScore(node, pod [MaxDimensions]float64) float64 {
-	var after [MaxDimensions]float64
-	for i := 0; i < MaxDimensions; i++ {
-		after[i] = math.Max(0, node[i]-pod[i])
-	}
-
-	entropyBefore := resourceEntropy(node)
-	entropyAfter := resourceEntropy(after)
-	recovery := entropyBefore - entropyAfter
-
-	magBefore, magAfter := 0.0, 0.0
-	for i := 0; i < MaxDimensions; i++ {
-		magBefore += node[i] * node[i]
-		magAfter += after[i] * after[i]
-	}
-	magBefore = math.Sqrt(magBefore)
-	magAfter = math.Sqrt(magAfter)
-
-	utilization := 0.0
-	if magBefore > 1e-10 {
-		utilization = (magBefore - magAfter) / magBefore
-	}
-
-	return PHI*recovery + utilization
-}
-
-// entropyLeakPenalty penalizes placements that strand resources.
-// A resource is "stranded" if after placement it has >70% free capacity
-// but the pod used <10% of that dimension (it didn't need it).
-func entropyLeakPenalty(node, pod [MaxDimensions]float64) float64 {
-	var after [MaxDimensions]float64
-	for i := 0; i < MaxDimensions; i++ {
-		after[i] = math.Max(0, node[i]-pod[i])
-	}
-
-	stranded := 0
-	for i := 0; i < MaxDimensions; i++ {
-		if after[i] > 0.70 && pod[i] < 0.10 {
-			stranded++
-		}
-	}
-	return float64(stranded) * 0.15
-}
-
-// lambdaGScore computes the final score for placing a pod on a node.
+// lambdaGScore computes the V3 hybrid score for placing a pod on a node.
 // Returns a value in [0, 100] where higher = better placement.
 func lambdaGScore(nodeVec, podVec [MaxDimensions]float64) float64 {
 	// Feasibility check — can the node fit the pod?
@@ -295,26 +229,67 @@ func lambdaGScore(nodeVec, podVec [MaxDimensions]float64) float64 {
 		return 5 // Very low but not zero (still feasible)
 	}
 
-	// 1. Cosine alignment: does the pod's shape match the node's free space?
-	alignment := cosineSimilarity(podVec, nodeVec)
+	// Compute after-placement used fraction
+	var afterUsed [MaxDimensions]float64
+	for i := 0; i < MaxDimensions; i++ {
+		afterUsed[i] = 1.0 - (nodeVec[i] - podVec[i])
+	}
 
-	// 2. Symmetric exhaustion: does placing this pod make the node more balanced?
-	exhaustionBonus := symmetricExhaustionScore(nodeVec, podVec)
+	// 1. Variance score (post-placement balance)
+	mean := 0.0
+	for i := 0; i < MaxDimensions; i++ {
+		mean += afterUsed[i]
+	}
+	mean /= float64(MaxDimensions)
+	variance := 0.0
+	for i := 0; i < MaxDimensions; i++ {
+		d := afterUsed[i] - mean
+		variance += d * d
+	}
+	variance /= float64(MaxDimensions)
+	varianceScore := math.Max(0, (1.0-variance*4)*100)
 
-	// 3. Entropy leak: does this placement strand resources?
-	entropyPenalty := entropyLeakPenalty(nodeVec, podVec)
+	// 2. Alignment score (cosine similarity)
+	alignment := cosineSimilarity(nodeVec, podVec)
+	alignmentScore := alignment * 100
 
-	// 4. Headroom bonus: prefer nodes with more breathing room
-	headroom := (nodeVec[0] + nodeVec[1]) / 2
+	// 3. Headroom score
+	headroom := 0.0
+	for i := 0; i < MaxDimensions; i++ {
+		headroom += nodeVec[i]
+	}
+	headroom /= float64(MaxDimensions)
+	headroomScore := headroom * 100
 
-	// Combine with φ-weighted formula
-	raw := PHI*alignment + exhaustionBonus - entropyPenalty + headroom*0.3
-	return math.Max(0, math.Min(100, raw*30+50))
+	// 4. Pressure penalty (near exhaustion)
+	pressure := 0.0
+	for i := 0; i < MaxDimensions; i++ {
+		v := afterUsed[i]
+		if v > 0.92 {
+			pressure += (v - 0.92) * 500
+		} else if v > 0.85 {
+			pressure += (v - 0.85) * 50
+		}
+	}
+
+	// 5. Strand penalty (imbalanced dimension pairs)
+	strandPenalty := 0.0
+	for i := 0; i < MaxDimensions; i++ {
+		for j := i + 1; j < MaxDimensions; j++ {
+			if (afterUsed[i] > 0.80 && afterUsed[j] < 0.20) ||
+				(afterUsed[j] > 0.80 && afterUsed[i] < 0.20) {
+				strandPenalty += 15
+			}
+		}
+	}
+
+	raw := wVar*varianceScore + wAlign*alignmentScore + wHead*headroomScore - pressure - strandPenalty
+	return math.Max(0, math.Min(100, raw))
 }
 
 // Score implements framework.ScorePlugin.
-// It scores each node based on how well the pod's resource request
-// aligns with the node's free capacity, aiming for symmetric exhaustion.
+// It scores each node using the V3 hybrid formula combining variance,
+// alignment, headroom, pressure, and strand penalties.
 func (pl *Plugin) Score(
 	ctx context.Context,
 	state *framework.CycleState,
