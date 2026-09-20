@@ -136,9 +136,17 @@ func lambdaGScore(nodeVec, podVec [6]float64, dims int) float64 {
 		return 0.5
 	}
 
+	// Compute the post placement vector once on the stack. Previously each
+	// helper allocated its own via make(), costing 2 allocs and 96 B per score.
+	var afterArr [6]float64
+	for i := 0; i < dims; i++ {
+		afterArr[i] = math.Max(0, nodeVec[i]-podVec[i])
+	}
+	after := afterArr[:dims]
+
 	alignment := cosineSimilarity(nodeVec[:dims], podVec[:dims])
-	exhaustion := symmetricExhaustionScore(nodeVec[:dims], podVec[:dims])
-	penalty := entropyLeakPenalty(nodeVec[:dims], podVec[:dims])
+	exhaustion := symmetricExhaustionScore(nodeVec[:dims], after)
+	penalty := entropyLeakPenalty(after, podVec[:dims])
 
 	headroom := 0.0
 	if dims >= 2 {
@@ -183,12 +191,7 @@ func resourceEntropy(v []float64) float64 {
 	return h
 }
 
-func symmetricExhaustionScore(nodeVec, podVec []float64) float64 {
-	after := make([]float64, len(nodeVec))
-	for i := range nodeVec {
-		after[i] = math.Max(0, nodeVec[i]-podVec[i])
-	}
-
+func symmetricExhaustionScore(nodeVec, after []float64) float64 {
 	recovery := resourceEntropy(nodeVec) - resourceEntropy(after)
 
 	magBefore, magAfter := 0.0, 0.0
@@ -207,12 +210,7 @@ func symmetricExhaustionScore(nodeVec, podVec []float64) float64 {
 	return PHI*recovery + utilization
 }
 
-func entropyLeakPenalty(nodeVec, podVec []float64) float64 {
-	after := make([]float64, len(nodeVec))
-	for i := range nodeVec {
-		after[i] = math.Max(0, nodeVec[i]-podVec[i])
-	}
-
+func entropyLeakPenalty(after, podVec []float64) float64 {
 	stranded := 0
 	for i := range after {
 		if after[i] > 0.70 && podVec[i] < 0.10 {
