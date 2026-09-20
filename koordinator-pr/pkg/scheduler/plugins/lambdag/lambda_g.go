@@ -33,6 +33,9 @@ const (
 	// Name is the name of the plugin used in the plugin registry and configurations.
 	Name = "LambdaGHybridScore"
 
+	// PHI is the golden ratio, used for parameter free weighting.
+	PHI = 1.618033988749895
+
 	// MaxDimensions is the number of resource dimensions tracked.
 	// [CPU, Memory, GPUCore, GPUMemory, IOPS, Network]
 	MaxDimensions = 6
